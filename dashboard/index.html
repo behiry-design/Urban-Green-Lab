@@ -182,8 +182,8 @@ const CONFIG = {
   // instructor view trigger the swarm model on demand instead of only via
   // a cron job. Leave RUN_MODEL_URL empty to hide the button entirely — the
   // dashboard works fine without it, this is purely a convenience.
-  RUN_MODEL_URL:    "",   // e.g. "https://your-service.onrender.com"
-  RUN_MODEL_SECRET: "",   // must match RUN_SECRET set on that service
+  RUN_MODEL_URL:    "https://greenhouse-training.onrender.com/run"
+  RUN_MODEL_SECRET: "e5d52a6c251b1b8d4d1b9013c09e25dd",   // must match RUN_SECRET set on that service
 };
 
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
