@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Greenhouse Training — Dashboard</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+<style>
+  /* ==========================================================================
+     Palette: greenhouse "Optics" categorical/sequential + the fixed status
+     palette (good/warning/serious/critical) from the project's dataviz
+     standard. Light mode only — this dashboard is used on a shared screen /
+     laptop during training, not as a themed personal app.
+     ========================================================================== */
+  :root {
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --border:         rgba(11,11,11,0.10);
+
+    --brand-green:    #1B4332;
+    --brand-amber:    #E0A458;
+
+    --series-1: #2a78d6;   /* categorical slot 1 — blue (temperature / humidity) */
+    --series-3: #1baf7a;   /* categorical slot 3 — aqua (soil moisture) */
+    --seq-blue-500: #256abf;
+
+    --status-good:     #0ca30c;
+    --status-warning:  #fab219;
+    --status-serious:  #ec835a;
+    --status-critical: #d03b3b;
+    --status-muted:    #898781;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--page-plane); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  a { color: inherit; }
+
+  header.topbar {
+    background: var(--brand-green); color: #fff;
+    padding: 14px 20px; display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px;
+  }
+  header.topbar h1 { font-size: 17px; margin: 0; font-weight: 700; }
+  header.topbar .tabs { display: flex; gap: 6px; }
+  header.topbar button.tab {
+    background: rgba(255,255,255,0.12); border: none; color: #fff; padding: 8px 14px;
+    border-radius: 7px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  }
+  header.topbar button.tab.active { background: var(--brand-amber); color: #1F2A24; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 22px 20px 60px; }
+
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+  .toolbar .summary { display: flex; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 20px;
+    padding: 5px 12px; font-size: 12.5px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px;
+  }
+  .pill .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  button.refresh {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 12px; font-size: 13px; cursor: pointer; color: var(--text-primary);
+  }
+  button.refresh:hover { background: #f0f0ee; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+    cursor: pointer; transition: box-shadow .15s;
+  }
+  .card:hover { box-shadow: 0 3px 14px rgba(0,0,0,0.08); }
+  .card .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .card h3 { margin: 0 0 2px; font-size: 15.5px; }
+  .card .fruit { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 10px; }
+  .card .thumb { width: 100%; height: 110px; object-fit: cover; border-radius: 8px; background: var(--gridline); margin-bottom: 10px; }
+  .card .readings-row { display: flex; gap: 14px; font-size: 12.5px; color: var(--text-secondary); flex-wrap: wrap; }
+  .card .readings-row b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .card .last-seen { font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .badge.good     { background: rgba(12,163,12,0.12);  color: #086b08; }
+  .badge.warning  { background: rgba(250,178,25,0.18); color: #7a5200; }
+  .badge.serious  { background: rgba(236,131,90,0.18); color: #8a3d1c; }
+  .badge.critical { background: rgba(208,59,59,0.14);  color: #8f2323; }
+  .badge.muted    { background: rgba(137,135,129,0.14); color: var(--text-secondary); }
+  .badge .dot.good     { background: var(--status-good); }
+  .badge .dot.warning  { background: var(--status-warning); }
+  .badge .dot.serious  { background: var(--status-serious); }
+  .badge .dot.critical { background: var(--status-critical); }
+  .badge .dot.muted    { background: var(--status-muted); }
+
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .panel h2 { margin-top: 0; font-size: 16.5px; }
+  .factor-list { font-size: 13px; color: var(--text-secondary); margin: 8px 0 0; padding-left: 18px; }
+
+  .login-box { max-width: 380px; margin: 60px auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 14px; padding: 26px; }
+  .login-box h2 { margin-top: 0; font-size: 18px; }
+  .login-box label { display: block; font-size: 12.5px; color: var(--text-secondary); margin: 12px 0 4px; }
+  .login-box input { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+  .login-box button, .primary-btn {
+    margin-top: 16px; width: 100%; background: var(--brand-green); color: #fff; border: none;
+    padding: 10px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .login-box .error { color: var(--status-critical); font-size: 12.5px; margin-top: 10px; }
+
+  .team-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+  .team-header h2 { margin: 0 0 4px; }
+  .team-header .sub { font-size: 13px; color: var(--text-secondary); }
+  .switch-link { font-size: 12.5px; color: var(--text-secondary); text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; }
+
+  .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .charts-row { grid-template-columns: 1fr; } }
+  .chart-box { position: relative; height: 240px; }
+  .chart-legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+  .chart-legend .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 5px; vertical-align: -1px; }
+
+  select, .range-select { padding: 6px 9px; border-radius: 7px; border: 1px solid var(--border); font-size: 13px; background: #fff; }
+
+  .upload-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  .upload-row input[type=text] { flex: 1; min-width: 180px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+  .upload-row input:disabled, .upload-row button:disabled { opacity: .5; cursor: not-allowed; }
+  .upload-status { font-size: 12.5px; margin-top: 8px; color: var(--text-secondary); }
+
+  .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-top: 12px; }
+  .photo-grid figure { margin: 0; }
+  .photo-frame { position: relative; }
+  .photo-grid img { width: 100%; height: 120px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); display: block; }
+  .photo-grid figcaption { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .photo-delete {
+    position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(11,11,11,0.55); color: #fff; border: none; font-size: 14px; line-height: 1;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;
+  }
+  .photo-delete:hover { background: var(--status-critical); }
+
+  .empty-state { color: var(--text-muted); font-size: 13.5px; padding: 30px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <h1>🌱 Smart Greenhouse Training — Live Dashboard</h1>
+  <div class="tabs">
+    <button class="tab" data-route="instructor">Instructor view</button>
+    <button class="tab" data-route="team">My team's kit</button>
+  </div>
+</header>
+
+<main id="app"></main>
+
+<script>
+/* ============================================================================
+   CONFIG — the instructor fills these in ONCE (same values for every team).
+   They are not secret: SUPABASE_ANON_KEY is Supabase's public "anon" key,
+   safe to ship in a static file. It is deliberately weak on its own — every
+   write still has to pass the device_token check inside insert_reading /
+   insert_photo (see sql/setup.sql).
+   ============================================================================ */
+const CONFIG = {
+  SUPABASE_URL:      "https://onrozqpzbaavvkiqqmkz.supabase.co",
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ucm96cXB6YmFhdnZraXFxbWt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4OTk4MzgsImV4cCI6MjEwNDQ3NTgzOH0.uufWko5ciOuoxzmzzM8eYlahDd4LFP-GIywzdAXprh8",
+  PHOTOS_BUCKET:     "growth-photos",
+  REFRESH_MS:        30000,   // how often views auto-refresh
+  PHOTO_MAX_DIMENSION_PX: 1600,  // longest side a growth photo is resized to before upload
+  PHOTO_JPEG_QUALITY:     0.75,  // re-encode quality (0-1) after resizing
+  PHOTO_MAX_ORIGINAL_MB:  8,     // if a photo can't be resized in-browser, refuse anything bigger than this
+  PHOTO_MIN_INTERVAL_HOURS: 24,  // how often a team may add a growth photo — must match sql/setup.sql's insert_photo()
+
+  // Optional: the hosted endpoint from service/app.py that lets the
+  // instructor view trigger the swarm model on demand instead of only via
+  // a cron job. Leave RUN_MODEL_URL empty to hide the button entirely — the
+  // dashboard works fine without it, this is purely a convenience.
+  RUN_MODEL_URL:    "https://greenhouse-training.onrender.com/run"
+  RUN_MODEL_SECRET: "e5d52a6c251b1b8d4d1b9013c09e25dd",   // must match RUN_SECRET set on that service
+};
+
+const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+const app = document.getElementById("app");
+let refreshTimer = null;
+
+// ---------------------------------------------------------------------------
+// Small shared helpers
+// ---------------------------------------------------------------------------
+
+function statusMeta(status) {
+  switch (status) {
+    case "healthy":  return { cls: "good",     label: "Healthy" };
+    case "watch":    return { cls: "warning",  label: "Watch" };
+    case "stressed": return { cls: "critical", label: "Stressed" };
+    default:         return { cls: "muted",    label: "No data yet" };
+  }
+}
+
+function badgeHtml(status) {
+  const m = statusMeta(status);
+  return `<span class="badge ${m.cls}"><span class="dot ${m.cls}"></span>${m.label}</span>`;
+}
+
+function factorLabel(key) {
+  return ({
+    vpd_out_of_band: "Air is too dry or too humid for this crop's ideal range (VPD out of band)",
+    soil_dry:        "Soil moisture is very low",
+    soil_waterlogged:"Soil moisture is very high",
+    soil_drying_fast:"Soil is drying out quickly",
+    disease_suspected:"A recent growth photo showed possible signs of disease — worth a closer look",
+  })[key] || key;
+}
+
+function relativeTime(iso) {
+  if (!iso) return "never";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  return `${Math.round(hrs / 24)} d ago`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function publicPhotoUrl(storagePath) {
+  return sb.storage.from(CONFIG.PHOTOS_BUCKET).getPublicUrl(storagePath).data.publicUrl;
+}
+
+function rangeToSince(rangeKey) {
+  const hours = { "24h": 24, "3d": 72, "7d": 168 }[rangeKey] || 24;
+  return new Date(Date.now() - hours * 3600 * 1000).toISOString();
+}
+
+// A single-axis line chart. `series` is [{label, data:[{x,y}], color}].
+// Never mixes two different measurement scales on one chart (see dataviz
+// guidance) — callers are responsible for grouping compatible series only.
+function drawLineChart(canvas, series, yLabel) {
+  return new Chart(canvas, {
+    type: "line",
+    data: {
+      datasets: series.map(s => ({
+        label: s.label,
+        data: s.data,
+        borderColor: s.color,
+        backgroundColor: s.color,
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.25,
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: { type: "time", time: { unit: "hour" }, grid: { color: "#e1e0d9" }, ticks: { color: "#898781", maxRotation: 0 } },
+        y: { title: { display: true, text: yLabel, color: "#52514e" }, grid: { color: "#e1e0d9" }, ticks: { color: "#898781" } },
+      },
+      plugins: {
+        legend: { display: series.length > 1, labels: { color: "#52514e", boxWidth: 10 } },
+        tooltip: { intersect: false },
+      },
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+function currentRoute() {
+  const hash = (location.hash || "").replace(/^#\/?/, "");
+  return hash === "team" ? "team" : "instructor";
+}
+
+function setActiveTab(route) {
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.route === route);
+  });
+}
+
+function render() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  const route = currentRoute();
+  setActiveTab(route);
+  if (route === "team") renderTeamView();
+  else renderInstructorView();
+}
+
+document.querySelectorAll(".tab").forEach(btn => {
+  btn.addEventListener("click", () => { location.hash = "#/" + btn.dataset.route; });
+});
+window.addEventListener("hashchange", render);
+
+// ============================================================================
+// Instructor view — every kit at a glance
+// ============================================================================
+
+async function renderInstructorView() {
+  const runButtonHtml = CONFIG.RUN_MODEL_URL
+    ? `<button class="refresh" id="run-model-btn">▶ Run swarm model now</button>`
+    : "";
+  app.innerHTML = `
+    <div class="toolbar">
+      <div class="summary" id="summary-pills"></div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <span id="model-last-run" style="font-size:12px;color:var(--text-muted);"></span>
+        ${runButtonHtml}
+        <button class="refresh" id="refresh-btn">↻ Refresh now</button>
+      </div>
+    </div>
+    <div id="grid" class="grid"><div class="empty-state">Loading kits…</div></div>
+  `;
+  document.getElementById("refresh-btn").addEventListener("click", loadInstructorData);
+  if (CONFIG.RUN_MODEL_URL) {
+    document.getElementById("run-model-btn").addEventListener("click", runSwarmModelNow);
+  }
+  await loadInstructorData();
+  refreshTimer = setInterval(loadInstructorData, CONFIG.REFRESH_MS);
+}
+
+async function runSwarmModelNow() {
+  const btn = document.getElementById("run-model-btn");
+  const lastRunEl = document.getElementById("model-last-run");
+  btn.disabled = true;
+  btn.textContent = "Running… (up to ~60s on a cold start)";
+  try {
+    const resp = await fetch(CONFIG.RUN_MODEL_URL.replace(/\/$/, "") + "/run", {
+      method: "POST",
+      headers: { "X-Run-Secret": CONFIG.RUN_MODEL_SECRET },
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(body.detail || `HTTP ${resp.status}`);
+    }
+    await loadInstructorData(); // re-reads swarm_model_state, which updates model-last-run itself
+  } catch (e) {
+    lastRunEl.textContent = `Couldn't run the model: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "▶ Run swarm model now";
+  }
+}
+
+async function loadInstructorData() {
+  const [{ data: kits, error: kitsErr }, { data: scores }, { data: recentReadings }, { data: recentPhotos }, { data: modelState }] = await Promise.all([
+    sb.from("kits_public").select("*").order("id"),
+    sb.from("health_scores").select("*"),
+    sb.from("readings").select("kit_id, recorded_at, temp_c, humidity_pct, soil_moisture_pct").order("recorded_at", { ascending: false }).limit(1000),
+    sb.from("photos").select("kit_id, uploaded_at, storage_path").order("uploaded_at", { ascending: false }).limit(300),
+    sb.from("swarm_model_state").select("*").eq("id", 1).maybeSingle(),
+  ]);
+
+  if (kitsErr) {
+    document.getElementById("grid").innerHTML =
+      `<div class="empty-state">Couldn't load data. Check CONFIG.SUPABASE_URL / SUPABASE_ANON_KEY at the top of this file.<br><code>${escapeHtml(kitsErr.message)}</code></div>`;
+    return;
+  }
+
+  const lastRunEl = document.getElementById("model-last-run");
+  if (lastRunEl) {
+    lastRunEl.textContent = (modelState && modelState.trained_at)
+      ? `Model last run ${relativeTime(modelState.trained_at)} (${modelState.n_kits_included ?? "?"}/${(kits || []).length} kits scored)`
+      : "Model hasn't been run yet.";
+  }
+
+  const scoreByKit = Object.fromEntries((scores || []).map(s => [s.kit_id, s]));
+  const latestReadingByKit = {};
+  for (const r of recentReadings || []) if (!latestReadingByKit[r.kit_id]) latestReadingByKit[r.kit_id] = r;
+  const latestPhotoByKit = {};
+  for (const p of recentPhotos || []) if (!latestPhotoByKit[p.kit_id]) latestPhotoByKit[p.kit_id] = p;
+
+  const counts = { healthy: 0, watch: 0, stressed: 0, insufficient_data: 0 };
+  for (const k of kits) counts[(scoreByKit[k.id] || {}).status || "insufficient_data"]++;
+
+  document.getElementById("summary-pills").innerHTML = `
+    <span class="pill"><span class="dot" style="background:var(--status-good)"></span>${counts.healthy} healthy</span>
+    <span class="pill"><span class="dot" style="background:var(--status-warning)"></span>${counts.watch} watch</span>
+    <span class="pill"><span class="dot" style="background:var(--status-critical)"></span>${counts.stressed} stressed</span>
+    <span class="pill"><span class="dot" style="background:var(--status-muted)"></span>${counts.insufficient_data} no data yet</span>
+  `;
+
+  const grid = document.getElementById("grid");
+  if (!kits.length) {
+    grid.innerHTML = `<div class="empty-state">No kits registered yet — add rows to the <code>kits</code> table (see sql/setup.sql, section 5).</div>`;
+    return;
+  }
+
+  grid.innerHTML = kits.map(k => {
+    const score = scoreByKit[k.id];
+    const reading = latestReadingByKit[k.id];
+    const photo = latestPhotoByKit[k.id];
+    return `
+      <div class="card" data-kit="${escapeHtml(k.id)}">
+        ${photo ? `<img class="thumb" src="${publicPhotoUrl(photo.storage_path)}" alt="">` : ""}
+        <div class="card-top">
+          <div><h3>${escapeHtml(k.team_name)}</h3><div class="fruit">${escapeHtml(k.id)} · ${escapeHtml(k.fruit_type || "—")}</div></div>
+          ${badgeHtml(score ? score.status : null)}
+        </div>
+        ${reading ? `
+          <div class="readings-row">
+            <span>🌡️ <b>${reading.temp_c?.toFixed(1) ?? "—"}°C</b></span>
+            <span>💧 <b>${reading.humidity_pct?.toFixed(0) ?? "—"}%</b></span>
+            <span>🪴 <b>${reading.soil_moisture_pct?.toFixed(0) ?? "—"}%</b></span>
+          </div>
+        ` : `<div class="empty-state" style="padding:8px 0;">No readings yet</div>`}
+        <div class="last-seen">Last reading: ${relativeTime(reading?.recorded_at)}${score ? ` · Score ${score.score ?? "—"}` : ""}</div>
+      </div>
+    `;
+  }).join("");
+
+  grid.querySelectorAll(".card").forEach(card => {
+    card.addEventListener("click", () => {
+      localStorage.setItem("gh_instructor_peek_kit", card.dataset.kit);
+      location.hash = "#/team";
+    });
+  });
+}
+
+// ============================================================================
+// Team view — one kit's live readings, health status, and photo timeline
+// ============================================================================
+
+function getStoredCreds() {
+  try {
+    return JSON.parse(localStorage.getItem("gh_kit_creds") || "null");
+  } catch { return null; }
+}
+function storeCreds(kitId, token) {
+  localStorage.setItem("gh_kit_creds", JSON.stringify({ kitId, token }));
+}
+function clearCreds() {
+  localStorage.removeItem("gh_kit_creds");
+}
+
+async function renderTeamView() {
+  const peekKit = localStorage.getItem("gh_instructor_peek_kit");
+  const creds = getStoredCreds();
+
+  if (peekKit && !creds) {
+    // Came from clicking an instructor card: show the kit's public info
+    // without requiring the team's device_token (read-only peek, no upload).
+    return renderTeamDashboard(peekKit, null);
+  }
+  if (!creds) return renderLoginForm();
+  return renderTeamDashboard(creds.kitId, creds.token);
+}
+
+function renderLoginForm(errorMsg) {
+  app.innerHTML = `
+    <div class="login-box">
+      <h2>My team's kit</h2>
+      <div style="font-size:13px;color:var(--text-secondary)">Enter the Kit ID and token from your team's kit card.</div>
+      <label for="kit-id">Kit ID</label>
+      <input id="kit-id" type="text" placeholder="e.g. K01" autocomplete="off">
+      <label for="kit-token">Device token</label>
+      <input id="kit-token" type="text" placeholder="from your kit card" autocomplete="off">
+      <button id="login-btn">View my kit</button>
+      ${errorMsg ? `<div class="error">${escapeHtml(errorMsg)}</div>` : ""}
+    </div>
+  `;
+  document.getElementById("login-btn").addEventListener("click", async () => {
+    const kitId = document.getElementById("kit-id").value.trim().toUpperCase();
+    const token = document.getElementById("kit-token").value.trim();
+    if (!kitId || !token) return renderLoginForm("Enter both fields.");
+    // Confirm the pair is valid by attempting a harmless RPC call: inserting
+    // a photo record needs a real storage_path, so instead we verify by
+    // checking the kit exists and then trusting the token — the real check
+    // happens for real the moment they try to upload a photo (insert_photo
+    // will reject a wrong token then). This keeps the login step to one
+    // read call.
+    const { data: kit, error } = await sb.from("kits_public").select("id").eq("id", kitId).maybeSingle();
+    if (error || !kit) return renderLoginForm(`Kit ID "${kitId}" not found.`);
+    storeCreds(kitId, token);
+    renderTeamDashboard(kitId, token);
+  });
+}
+
+async function renderTeamDashboard(kitId, token) {
+  const readOnly = !token;
+  const { data: kit, error: kitErr } = await sb.from("kits_public").select("*").eq("id", kitId).maybeSingle();
+  if (kitErr || !kit) {
+    clearCreds();
+    return renderLoginForm(`Kit "${kitId}" not found — check the Kit ID.`);
+  }
+
+  app.innerHTML = `
+    <div class="team-header">
+      <div>
+        <h2>${escapeHtml(kit.team_name)} <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(kit.id)})</span></h2>
+        <div class="sub" id="fruit-type-row">
+          Growing: <span id="fruit-type-value">${escapeHtml(kit.fruit_type || "not set yet")}</span>
+          ${readOnly ? "" : `<button class="switch-link" id="edit-fruit-btn" style="margin-left:8px;">✎ ${kit.fruit_type ? "edit" : "set this"}</button>`}
+        </div>
+      </div>
+      <div style="display:flex; gap:14px; align-items:center;">
+        <select id="range-select" class="range-select">
+          <option value="24h">Last 24 hours</option>
+          <option value="3d">Last 3 days</option>
+          <option value="7d">Last 7 days</option>
+        </select>
+        ${readOnly
+          ? `<button class="switch-link" id="switch-btn">Enter my team's token →</button>`
+          : `<button class="switch-link" id="switch-btn">Switch kit</button>`}
+      </div>
+    </div>
+
+    <div class="panel" id="health-panel"></div>
+
+    <div class="panel">
+      <h2>Sensor readings</h2>
+      <div class="charts-row">
+        <div>
+          <div class="chart-box"><canvas id="chart-temp"></canvas></div>
+        </div>
+        <div>
+          <div class="chart-box"><canvas id="chart-moisture"></canvas></div>
+          <div class="chart-legend">
+            <span><span class="swatch" style="background:var(--series-1)"></span>Humidity %</span>
+            <span><span class="swatch" style="background:var(--series-3)"></span>Soil moisture %</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    ${readOnly ? "" : `
+    <div class="panel">
+      <h2>Document today's growth</h2>
+      <div class="upload-row" id="upload-row">
+        <input type="file" id="photo-file" accept="image/*" capture="environment">
+        <input type="text" id="photo-note" placeholder="Optional note (e.g. 'first flower buds visible')">
+        <button class="primary-btn" id="upload-btn" style="width:auto; margin-top:0;">Upload photo</button>
+      </div>
+      <div class="upload-status" id="upload-status"></div>
+    </div>
+    `}
+
+    <div class="panel">
+      <h2>Growth photo timeline</h2>
+      <div id="photo-grid" class="photo-grid"><div class="empty-state">Loading photos…</div></div>
+    </div>
+  `;
+
+  document.getElementById("switch-btn").addEventListener("click", () => {
+    clearCreds();
+    localStorage.removeItem("gh_instructor_peek_kit");
+    location.hash = "#/team";
+    render();
+  });
+
+  if (!readOnly) {
+    document.getElementById("edit-fruit-btn").addEventListener("click", () => {
+      const row = document.getElementById("fruit-type-row");
+      const current = kit.fruit_type || "";
+      row.innerHTML = `
+        Growing:
+        <input id="fruit-type-input" type="text" value="${escapeHtml(current)}" placeholder="e.g. strawberry"
+               style="padding:4px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px; width:160px;">
+        <button class="switch-link" id="save-fruit-btn" style="margin-left:6px;">Save</button>
+      `;
+      document.getElementById("fruit-type-input").focus();
+      document.getElementById("save-fruit-btn").addEventListener("click", () => saveFruitType(kitId, token, kit));
+      document.getElementById("fruit-type-input").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") saveFruitType(kitId, token, kit);
+      });
+    });
+  }
+
+  const rangeSelect = document.getElementById("range-select");
+  rangeSelect.addEventListener("change", () => loadTeamCharts(kitId, rangeSelect.value));
+
+  if (!readOnly) {
+    document.getElementById("upload-btn").addEventListener("click", () => uploadPhoto(kitId, token));
+  }
+
+  async function refreshAll() {
+    await Promise.all([
+      loadHealthPanel(kitId),
+      loadTeamCharts(kitId, rangeSelect.value),
+      loadPhotoGrid(kitId, token),
+    ]);
+  }
+  await refreshAll();
+  refreshTimer = setInterval(refreshAll, CONFIG.REFRESH_MS);
+}
+
+async function saveFruitType(kitId, token, kit) {
+  const input = document.getElementById("fruit-type-input");
+  const value = input.value.trim();
+  const row = document.getElementById("fruit-type-row");
+  row.innerHTML = `Growing: <span id="fruit-type-value">Saving…</span>`;
+  const { error } = await sb.rpc("set_kit_fruit_type", { p_kit_id: kitId, p_token: token, p_fruit_type: value || null });
+  if (error) {
+    row.innerHTML = `Growing: <span id="fruit-type-value">${escapeHtml(kit.fruit_type || "not set yet")}</span> <span class="error" style="margin-left:6px;">Couldn't save — check your device token.</span>`;
+    return;
+  }
+  kit.fruit_type = value;
+  row.innerHTML = `
+    Growing: <span id="fruit-type-value">${escapeHtml(value || "not set yet")}</span>
+    <button class="switch-link" id="edit-fruit-btn" style="margin-left:8px;">✎ ${value ? "edit" : "set this"}</button>
+  `;
+  document.getElementById("edit-fruit-btn").addEventListener("click", () => {
+    row.innerHTML = `
+      Growing:
+      <input id="fruit-type-input" type="text" value="${escapeHtml(kit.fruit_type || "")}" placeholder="e.g. strawberry"
+             style="padding:4px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px; width:160px;">
+      <button class="switch-link" id="save-fruit-btn" style="margin-left:6px;">Save</button>
+    `;
+    document.getElementById("fruit-type-input").focus();
+    document.getElementById("save-fruit-btn").addEventListener("click", () => saveFruitType(kitId, token, kit));
+    document.getElementById("fruit-type-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveFruitType(kitId, token, kit);
+    });
+  });
+}
+
+async function loadHealthPanel(kitId) {
+  const { data: score } = await sb.from("health_scores").select("*").eq("kit_id", kitId).maybeSingle();
+  const status = score ? score.status : null;
+  const factors = (score && score.contributing_factors) || {};
+  const factorKeys = Object.keys(factors).filter(k => factors[k] === true);
+  document.getElementById("health-panel").innerHTML = `
+    <h2>Current status ${badgeHtml(status)}</h2>
+    ${score && score.score != null ? `<div style="font-size:13px;color:var(--text-secondary)">Health score: <b>${score.score}</b>/100 · updated ${relativeTime(score.updated_at)}</div>` : ""}
+    ${factorKeys.length ? `<ul class="factor-list">${factorKeys.map(k => `<li>${escapeHtml(factorLabel(k))}</li>`).join("")}</ul>` : ""}
+    ${!score || status === "insufficient_data" ? `<div style="font-size:13px;color:var(--text-secondary); margin-top:6px;">Keep the kit reporting for a bit — the shared model needs a few readings before it can judge this kit.</div>` : ""}
+  `;
+}
+
+let chartTemp = null, chartMoisture = null;
+
+async function loadTeamCharts(kitId, rangeKey) {
+  const since = rangeToSince(rangeKey);
+  const { data: readings, error } = await sb
+    .from("readings")
+    .select("recorded_at, temp_c, humidity_pct, soil_moisture_pct")
+    .eq("kit_id", kitId)
+    .gte("recorded_at", since)
+    .order("recorded_at", { ascending: true });
+
+  if (chartTemp) chartTemp.destroy();
+  if (chartMoisture) chartMoisture.destroy();
+  if (error || !readings || !readings.length) {
+    const msg = `<div class="empty-state">No readings in this window yet.</div>`;
+    document.getElementById("chart-temp").parentElement.innerHTML = msg;
+    document.getElementById("chart-moisture").parentElement.innerHTML = msg;
+    return;
+  }
+
+  chartTemp = drawLineChart(
+    document.getElementById("chart-temp"),
+    [{ label: "Temperature °C", data: readings.map(r => ({ x: r.recorded_at, y: r.temp_c })), color: "#256abf" }],
+    "°C"
+  );
+  chartMoisture = drawLineChart(
+    document.getElementById("chart-moisture"),
+    [
+      { label: "Humidity %", data: readings.map(r => ({ x: r.recorded_at, y: r.humidity_pct })), color: "#2a78d6" },
+      { label: "Soil moisture %", data: readings.map(r => ({ x: r.recorded_at, y: r.soil_moisture_pct })), color: "#1baf7a" },
+    ],
+    "%"
+  );
+}
+
+// Photos are meant to show change over time, not a burst of shots in one
+// sitting — the dashboard nudges teams toward roughly one a day. The real
+// gate is server-side (insert_photo in sql/setup.sql rejects an upload
+// that's too soon regardless of this UI), this just gives a clear reason
+// and a countdown instead of a team hitting a confusing error.
+function updateUploadCooldownUI(lastUploadedAt) {
+  const row = document.getElementById("upload-row");
+  if (!row) return; // read-only (instructor peek) view has no upload panel
+  const statusEl = document.getElementById("upload-status");
+  const remainingMs = lastUploadedAt
+    ? (new Date(lastUploadedAt).getTime() + CONFIG.PHOTO_MIN_INTERVAL_HOURS * 3600000) - Date.now()
+    : 0;
+  if (remainingMs > 0) {
+    const h = Math.floor(remainingMs / 3600000);
+    const m = Math.floor((remainingMs % 3600000) / 60000);
+    row.querySelectorAll("input, button").forEach(el => { el.disabled = true; });
+    statusEl.textContent = `✓ Growth photo already added — next one unlocks in ${h}h ${m}m (about once a day is enough to show real change).`;
+  } else {
+    row.querySelectorAll("input, button").forEach(el => { el.disabled = false; });
+    if (statusEl.textContent.startsWith("✓")) statusEl.textContent = "";
+  }
+}
+
+async function loadPhotoGrid(kitId, token) {
+  const { data: photos } = await sb.from("photos").select("*").eq("kit_id", kitId).order("uploaded_at", { ascending: false }).limit(60);
+  updateUploadCooldownUI(photos && photos.length ? photos[0].uploaded_at : null);
+  const grid = document.getElementById("photo-grid");
+  if (!photos || !photos.length) {
+    grid.innerHTML = `<div class="empty-state">No photos uploaded yet.</div>`;
+    return;
+  }
+  // Delete is only offered to the team itself (readOnly/instructor-peek has
+  // no token) — real removal is enforced server-side by delete_photo, which
+  // re-checks the device token itself, so this is just what decides whether
+  // to show the button.
+  grid.innerHTML = photos.map(p => `
+    <figure>
+      <div class="photo-frame">
+        <img src="${publicPhotoUrl(p.storage_path)}" alt="">
+        ${token ? `<button class="photo-delete" type="button" data-photo-id="${p.id}" data-storage-path="${escapeHtml(p.storage_path)}" title="Delete this photo">×</button>` : ""}
+      </div>
+      <figcaption>${new Date(p.uploaded_at).toLocaleDateString()}${p.note ? " — " + escapeHtml(p.note) : ""}</figcaption>
+    </figure>
+  `).join("");
+
+  if (token) {
+    grid.querySelectorAll(".photo-delete").forEach(btn => {
+      btn.addEventListener("click", () => deletePhoto(kitId, token, Number(btn.dataset.photoId), btn.dataset.storagePath));
+    });
+  }
+}
+
+async function deletePhoto(kitId, token, photoId, storagePath) {
+  if (!confirm("Delete this photo? This can't be undone.")) return;
+  // delete_photo() only removes the metadata row (see its comment in sql/setup.sql —
+  // Supabase blocks raw SQL DELETE on storage.objects). The actual file in storage
+  // has to be removed separately, through the Storage API, which is what this second
+  // call does. It runs best-effort: if it fails, the photo is already gone from the
+  // gallery (the part the team cares about) and the file is just left behind in
+  // storage rather than the delete appearing to fail.
+  const { error } = await sb.rpc("delete_photo", { p_kit_id: kitId, p_token: token, p_photo_id: photoId });
+  if (error) { alert(`Couldn't delete this photo: ${error.message}`); return; }
+  if (storagePath) {
+    const { error: storageErr } = await sb.storage.from(CONFIG.PHOTOS_BUCKET).remove([storagePath]);
+    if (storageErr) console.warn(`Photo record deleted, but removing the file from storage failed: ${storageErr.message}`);
+  }
+  loadPhotoGrid(kitId, token);
+}
+
+// Resizes/re-compresses an image file in the browser before it ever leaves
+// the device — this is what keeps 30 teams' phone photos (often 3-10MB each)
+// from blowing through Supabase's free-tier storage/bandwidth quota. Returns
+// a JPEG Blob, always at most CONFIG.PHOTO_MAX_DIMENSION_PX on the long edge.
+function resizeImageForUpload(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+        else { width = Math.round(width * maxDim / height); height = maxDim; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => { URL.revokeObjectURL(objectUrl); blob ? resolve(blob) : reject(new Error("canvas produced no blob")); },
+        "image/jpeg", quality
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("browser couldn't decode this image")); };
+    img.src = objectUrl;
+  });
+}
+
+async function uploadPhoto(kitId, token) {
+  const fileInput = document.getElementById("photo-file");
+  const noteInput = document.getElementById("photo-note");
+  const statusEl = document.getElementById("upload-status");
+  const file = fileInput.files[0];
+  if (!file) { statusEl.textContent = "Choose a photo first."; return; }
+
+  statusEl.textContent = "Preparing photo…";
+  let uploadBlob, ext, contentType;
+  try {
+    uploadBlob = await resizeImageForUpload(file, CONFIG.PHOTO_MAX_DIMENSION_PX, CONFIG.PHOTO_JPEG_QUALITY);
+    ext = "jpg";
+    contentType = "image/jpeg";
+  } catch (e) {
+    // Couldn't decode it in-browser (e.g. an unusual format) — fall back to
+    // uploading the original file as-is, but only if it's a sane size.
+    if (file.size > CONFIG.PHOTO_MAX_ORIGINAL_MB * 1024 * 1024) {
+      statusEl.textContent = `This photo is too large to upload as-is (over ${CONFIG.PHOTO_MAX_ORIGINAL_MB}MB) and couldn't be compressed automatically — try a different photo.`;
+      return;
+    }
+    uploadBlob = file;
+    ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    contentType = file.type || "image/jpeg";
+  }
+
+  statusEl.textContent = "Uploading…";
+  const path = `${kitId}/${Date.now()}.${ext}`;
+
+  const { error: uploadErr } = await sb.storage.from(CONFIG.PHOTOS_BUCKET).upload(path, uploadBlob, { contentType });
+  if (uploadErr) { statusEl.textContent = `Upload failed: ${uploadErr.message}`; return; }
+
+  const { error: rpcErr } = await sb.rpc("insert_photo", {
+    p_kit_id: kitId, p_token: token, p_storage_path: path, p_note: noteInput.value.trim() || null,
+  });
+  if (rpcErr) {
+    statusEl.textContent = `Couldn't save this photo: ${rpcErr.message}`;
+    return;
+  }
+
+  statusEl.textContent = "Photo uploaded!";
+  fileInput.value = "";
+  noteInput.value = "";
+  loadPhotoGrid(kitId, token);
+}
+
+// ---------------------------------------------------------------------------
+render();
+</script>
+</body>
+</html>
