@@ -181,8 +181,9 @@ const CONFIG = {
   // Optional: the hosted endpoint from service/app.py that lets the
   // instructor view trigger the swarm model on demand instead of only via
   // a cron job. Leave RUN_MODEL_URL empty to hide the button entirely — the
-  // dashboard works fine without it, this is purely a convenience.
-  RUN_MODEL_URL:    "https://greenhouse-training.onrender.com/run"
+  // dashboard works fine without it, this is purely a convenience. NOTE:
+  // do NOT include "/run" here — runSwarmModelNow() appends that itself.
+  RUN_MODEL_URL:    "https://greenhouse-training.onrender.com",
   RUN_MODEL_SECRET: "e5d52a6c251b1b8d4d1b9013c09e25dd",   // must match RUN_SECRET set on that service
 };
 
