@@ -1,0 +1,17 @@
+# NEVER commit this — it holds every team's real device token in plaintext.
+# Anyone with these tokens can write fake sensor data or delete a team's
+# photos in Supabase, so this file must stay off GitHub entirely, even in a
+# private repo.
+kit_roster.csv
+
+# Build artifacts / working files, not source
+Greenhouse_Training_Platform.zip
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+
+# OS junk
+.DS_Store
+Thumbs.db
