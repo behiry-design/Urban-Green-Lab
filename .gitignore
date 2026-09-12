@@ -15,3 +15,12 @@ __pycache__/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Downloaded model weights for analyze_photos.py — large binary, and anyone
+# running the script fetches it fresh per the setup instructions in that
+# file's own docstring, so it doesn't belong in the repo.
+swarm_model/model/
+
+# One-off patch scripts used to apply fixes during development — not part
+# of the project itself.
+patch_*.py

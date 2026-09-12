@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Smart Greenhouse Training — Dashboard</title>
+<title>Urban Green Lab - Cairo — Dashboard</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
@@ -149,14 +149,17 @@
   .photo-analysis.ok { color: var(--status-good); }
   .photo-analysis.flag { color: var(--status-serious); font-weight: 600; }
   .photo-advice { font-size: 11px; color: var(--text-secondary); margin-top: 3px; line-height: 1.35; }
+  .photo-warning { font-size: 11px; color: #7a5200; font-weight: 600; margin-top: 3px; line-height: 1.35; }
 
   .empty-state { color: var(--text-muted); font-size: 13.5px; padding: 30px 0; text-align: center; }
+
+  footer.site-footer { text-align: center; font-size: 12px; color: var(--text-muted); padding: 10px 20px 30px; }
 </style>
 </head>
 <body>
 
 <header class="topbar">
-  <h1>🌱 Smart Greenhouse Training — Live Dashboard</h1>
+  <h1>🌱 Urban Green Lab - Cairo</h1>
   <div class="tabs">
     <button class="tab" data-route="instructor">Instructor view</button>
     <button class="tab" data-route="team">My team's kit</button>
@@ -164,6 +167,8 @@
 </header>
 
 <main id="app"></main>
+
+<footer class="site-footer">Implemented by Nature Eye Labs and funded by Green Grants</footer>
 
 <script>
 /* ============================================================================
@@ -191,6 +196,18 @@ const CONFIG = {
   RUN_MODEL_URL:    "https://greenhouse-training.onrender.com",
   RUN_MODEL_SECRET: "e5d52a6c251b1b8d4d1b9013c09e25dd",   // must match RUN_SECRET set on that service
 };
+
+// The plants your teams are actually growing this term. The disease-
+// detection model (swarm_model/analyze_photos.py) was trained on 38 classes
+// across 14 crops — several of them (apple, cherry, peach, grape, orange,
+// blueberry, raspberry, corn, soybean) are trees/field crops nobody in a
+// home-greenhouse-kit program will ever really photograph. Because the model
+// always has to pick ONE of its 38 classes — it has no "I don't recognize
+// this" option — pointing it at an out-of-scope plant just produces a
+// confident wrong guess. Listing your real crops here lets the dashboard
+// flag those wrong guesses instead of presenting them as real diagnoses.
+// EDIT THIS LIST whenever the plants your teams grow change.
+const PROGRAM_CROPS = ["strawberry", "tomato", "pepper"];
 
 const sb = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 const app = document.getElementById("app");
@@ -237,6 +254,36 @@ function relativeTime(iso) {
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+// "Pepper, bell" -> "pepper", "Corn (maize)" -> "corn", "Cherry (including
+// sour)" -> "cherry" — strips the PlantVillage-style qualifiers so a model
+// crop name can be compared against PROGRAM_CROPS or a team's free-text
+// fruit_type.
+function normalizeCropName(name) {
+  return (name || "").toLowerCase().replace(/\(.*?\)/g, "").replace(/,.*$/, "").trim();
+}
+
+function capitalize(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+// Returns a short warning string if a photo-analysis result doesn't fit this
+// program, or null if it looks fine. Two checks: (1) is the detected crop
+// even one of PROGRAM_CROPS at all — catches the "photographed a plant this
+// model was never meant to judge" case; (2) does it match THIS kit's own
+// registered fruit_type — catches a mismatched/mislabeled photo.
+function cropMismatchWarning(detectedCrop, fruitType) {
+  if (!detectedCrop) return null;
+  const inProgram = PROGRAM_CROPS.some(c => normalizeCropName(c) === detectedCrop);
+  if (!inProgram) {
+    return `This looks like a plant outside this program's crops (detected "${capitalize(detectedCrop)}") — the model has no real match for it, so treat this result as unreliable.`;
+  }
+  const normalizedFruit = normalizeCropName(fruitType);
+  if (normalizedFruit && normalizedFruit !== detectedCrop) {
+    return `This kit is registered as growing "${fruitType}", but the photo looks more like ${capitalize(detectedCrop)} — double check this is the right kit/plant before trusting the result.`;
+  }
+  return null;
 }
 
 function publicPhotoUrl(storagePath) {
@@ -595,7 +642,7 @@ async function renderTeamDashboard(kitId, token) {
     await Promise.all([
       loadHealthPanel(kitId),
       loadTeamCharts(kitId, rangeSelect.value),
-      loadPhotoGrid(kitId, token),
+      loadPhotoGrid(kitId, token, kit.fruit_type),
     ]);
   }
   await refreshAll();
@@ -753,19 +800,26 @@ const DISEASE_ADVICE = {
 // One line under a photo showing what the disease-detection pass found for
 // it (run manually on a laptop — see swarm_model/analyze_photos.py — not
 // automatically the moment a photo is uploaded), or that it's still pending.
-function renderPhotoAnalysis(analysis) {
+function renderPhotoAnalysis(analysis, fruitType) {
   if (!analysis) return `<div class="photo-analysis pending">Not analyzed yet</div>`;
   const text = formatDiseaseLabel(analysis.label);
   const pct = analysis.confidence != null ? ` (${Math.round(analysis.confidence * 100)}% confidence)` : "";
   const cls = analysis.is_healthy === false ? "flag" : "ok";
-  const advice = analysis.is_healthy === false ? DISEASE_ADVICE[analysis.label] : null;
+
+  const detectedCrop = normalizeCropName((analysis.label || "").split("___")[0]);
+  const warning = cropMismatchWarning(detectedCrop, fruitType);
+  // Don't hand out a specific treatment tip for a diagnosis we're already
+  // telling the team not to trust.
+  const advice = (analysis.is_healthy === false && !warning) ? DISEASE_ADVICE[analysis.label] : null;
+
   return `
     <div class="photo-analysis ${cls}">${escapeHtml(text)}${pct}</div>
+    ${warning ? `<div class="photo-warning">⚠️ ${escapeHtml(warning)}</div>` : ""}
     ${advice ? `<div class="photo-advice">💡 ${escapeHtml(advice)}</div>` : ""}
   `;
 }
 
-async function loadPhotoGrid(kitId, token) {
+async function loadPhotoGrid(kitId, token, fruitType) {
   const { data: photos } = await sb.from("photos").select("*").eq("kit_id", kitId).order("uploaded_at", { ascending: false }).limit(60);
   updateUploadCooldownUI(photos && photos.length ? photos[0].uploaded_at : null);
   const grid = document.getElementById("photo-grid");
@@ -789,7 +843,7 @@ async function loadPhotoGrid(kitId, token) {
         ${token ? `<button class="photo-delete" type="button" data-photo-id="${p.id}" data-storage-path="${escapeHtml(p.storage_path)}" title="Delete this photo">×</button>` : ""}
       </div>
       <figcaption>${new Date(p.uploaded_at).toLocaleDateString()}${p.note ? " — " + escapeHtml(p.note) : ""}</figcaption>
-      ${renderPhotoAnalysis(analysisByPhoto[p.id])}
+      ${renderPhotoAnalysis(analysisByPhoto[p.id], fruitType)}
     </figure>
   `).join("");
 

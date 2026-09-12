@@ -97,7 +97,10 @@ def load_model_and_classes():
     class_names = json.loads(CLASS_NAMES_PATH.read_text())
 
     model = models.mobilenet_v2(weights=None)
-    model.classifier[1] = torch.nn.Linear(model.last_channel, len(class_names))
+    model.classifier[1] = torch.nn.Sequential(
+        torch.nn.ReLU(inplace=True),
+        torch.nn.Linear(model.last_channel, len(class_names)),
+    )
     state = torch.load(WEIGHTS_PATH, map_location="cpu")
     model.load_state_dict(state)
     model.eval()
