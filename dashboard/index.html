@@ -148,6 +148,7 @@
   .photo-analysis.pending { color: var(--text-muted); font-style: italic; }
   .photo-analysis.ok { color: var(--status-good); }
   .photo-analysis.flag { color: var(--status-serious); font-weight: 600; }
+  .photo-advice { font-size: 11px; color: var(--text-secondary); margin-top: 3px; line-height: 1.35; }
 
   .empty-state { color: var(--text-muted); font-size: 13.5px; padding: 30px 0; text-align: center; }
 </style>
@@ -714,6 +715,41 @@ function formatDiseaseLabel(label) {
   return `${crop} — possible ${condition || "issue"}`;
 }
 
+// Short, general care tips per non-healthy class label — standard, widely-
+// published agricultural-extension guidance (not a substitute for an
+// instructor or agronomist confirming the actual diagnosis, especially since
+// the model's confidence is never 100%). Deliberately generic ("a labeled
+// fungicide") rather than naming specific products, since availability
+// varies and this is a training aid, not a purchasing recommendation.
+const DISEASE_ADVICE = {
+  "Apple___Apple_scab": "Rake up and destroy fallen leaves in autumn to cut down overwintering spores. Apply a fungicide labeled for apple scab starting at bud break.",
+  "Apple___Black_rot": "Prune out dead or cankered wood and remove mummified fruit from the tree and ground, then apply a labeled fungicide during the growing season.",
+  "Apple___Cedar_apple_rust": "Remove nearby juniper/cedar hosts if practical, and apply a protective fungicide from pink bud through early summer.",
+  "Cherry_(including_sour)___Powdery_mildew": "Prune for better airflow, avoid wetting the leaves when watering, and apply a sulfur-based or other labeled fungicide at the first sign of white coating.",
+  "Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot": "Rotate out of corn for a season, till under old residue, and favor a resistant hybrid next planting; a fungicide can help a heavy infection.",
+  "Corn_(maize)___Common_rust_": "Usually mild in modern hybrids — if severe, apply a labeled fungicide and avoid overly dense planting that traps humidity.",
+  "Corn_(maize)___Northern_Leaf_Blight": "Rotate crops, plow under old plant debris, and use a resistant hybrid; fungicide helps if caught early.",
+  "Grape___Black_rot": "Remove mummified berries and infected leaves, prune for airflow, and keep to a fungicide schedule from bud break through veraison.",
+  "Grape___Esca_(Black_Measles)": "No cure once established — prune out and destroy the affected wood, avoid pruning in wet weather, and protect fresh pruning cuts.",
+  "Grape___Leaf_blight_(Isariopsis_Leaf_Spot)": "Improve canopy airflow, remove infected leaves, and apply a labeled fungicide.",
+  "Orange___Haunglongbing_(Citrus_greening)": "No cure — remove and destroy the infected tree to protect nearby citrus, and control the psyllid insect that spreads it.",
+  "Peach___Bacterial_spot": "Avoid overhead irrigation, prune for airflow, and apply a copper-based bactericide during dormancy and early season.",
+  "Pepper,_bell___Bacterial_spot": "Avoid handling wet plants, remove infected leaves, rotate the planting location next season, and apply a copper-based bactericide.",
+  "Potato___Early_blight": "Remove lower infected leaves, rotate away from potato/tomato for 2 years, and apply a labeled fungicide.",
+  "Potato___Late_blight": "Remove and destroy infected plants right away — it spreads fast — avoid overhead watering, and apply a protective fungicide before rain.",
+  "Squash___Powdery_mildew": "Space plants for airflow, water at the base rather than the leaves, and apply a sulfur or potassium-bicarbonate fungicide at the first sign.",
+  "Strawberry___Leaf_scorch": "Remove old/infected leaves after harvest, avoid overhead watering, and apply a labeled fungicide if it keeps recurring.",
+  "Tomato___Bacterial_spot": "Avoid overhead watering and handling wet plants, remove infected leaves, and apply a copper-based bactericide.",
+  "Tomato___Early_blight": "Remove the lower infected leaves, mulch to stop soil splashing onto foliage, rotate the planting spot yearly, and apply a labeled fungicide.",
+  "Tomato___Late_blight": "Remove and destroy infected plants immediately, avoid overhead watering, and apply a protective fungicide — this can wipe out a planting fast if ignored.",
+  "Tomato___Leaf_Mold": "Improve greenhouse/tunnel ventilation, reduce humidity, space plants further apart, and apply a labeled fungicide.",
+  "Tomato___Septoria_leaf_spot": "Remove infected lower leaves, mulch to reduce soil splashing onto foliage, avoid overhead watering, and apply a labeled fungicide if it spreads.",
+  "Tomato___Spider_mites Two-spotted_spider_mite": "Spray leaf undersides with water or insecticidal soap/miticide, raise humidity around the plants, and remove heavily infested leaves.",
+  "Tomato___Target_Spot": "Remove infected leaves, improve airflow with staking/pruning, avoid overhead watering, and apply a labeled fungicide.",
+  "Tomato___Tomato_Yellow_Leaf_Curl_Virus": "No cure — remove and destroy infected plants and control whiteflies (the insect that spreads it) with sticky traps or insecticidal soap.",
+  "Tomato___Tomato_mosaic_virus": "No cure — remove and destroy infected plants, and wash hands/tools between plants since it spreads by touch.",
+};
+
 // One line under a photo showing what the disease-detection pass found for
 // it (run manually on a laptop — see swarm_model/analyze_photos.py — not
 // automatically the moment a photo is uploaded), or that it's still pending.
@@ -722,7 +758,11 @@ function renderPhotoAnalysis(analysis) {
   const text = formatDiseaseLabel(analysis.label);
   const pct = analysis.confidence != null ? ` (${Math.round(analysis.confidence * 100)}% confidence)` : "";
   const cls = analysis.is_healthy === false ? "flag" : "ok";
-  return `<div class="photo-analysis ${cls}">${escapeHtml(text)}${pct}</div>`;
+  const advice = analysis.is_healthy === false ? DISEASE_ADVICE[analysis.label] : null;
+  return `
+    <div class="photo-analysis ${cls}">${escapeHtml(text)}${pct}</div>
+    ${advice ? `<div class="photo-advice">💡 ${escapeHtml(advice)}</div>` : ""}
+  `;
 }
 
 async function loadPhotoGrid(kitId, token) {
