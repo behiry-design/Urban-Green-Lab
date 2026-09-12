@@ -144,6 +144,10 @@
     cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;
   }
   .photo-delete:hover { background: var(--status-critical); }
+  .photo-analysis { font-size: 11px; margin-top: 3px; }
+  .photo-analysis.pending { color: var(--text-muted); font-style: italic; }
+  .photo-analysis.ok { color: var(--status-good); }
+  .photo-analysis.flag { color: var(--status-serious); font-weight: 600; }
 
   .empty-state { color: var(--text-muted); font-size: 13.5px; padding: 30px 0; text-align: center; }
 </style>
@@ -698,6 +702,29 @@ function updateUploadCooldownUI(lastUploadedAt) {
   }
 }
 
+// Turns a raw model label like "Tomato___Septoria_leaf_spot" into something
+// a team can actually read. The labels follow the PlantVillage dataset's
+// folder-naming convention: crop name, three underscores, condition name.
+function formatDiseaseLabel(label) {
+  if (!label) return "Unknown";
+  const [rawCrop, rawCondition] = label.split("___");
+  const crop = (rawCrop || "").replace(/_/g, " ").trim();
+  const condition = (rawCondition || "").replace(/_/g, " ").trim();
+  if (/^healthy$/i.test(condition)) return `${crop} — looks healthy`;
+  return `${crop} — possible ${condition || "issue"}`;
+}
+
+// One line under a photo showing what the disease-detection pass found for
+// it (run manually on a laptop — see swarm_model/analyze_photos.py — not
+// automatically the moment a photo is uploaded), or that it's still pending.
+function renderPhotoAnalysis(analysis) {
+  if (!analysis) return `<div class="photo-analysis pending">Not analyzed yet</div>`;
+  const text = formatDiseaseLabel(analysis.label);
+  const pct = analysis.confidence != null ? ` (${Math.round(analysis.confidence * 100)}% confidence)` : "";
+  const cls = analysis.is_healthy === false ? "flag" : "ok";
+  return `<div class="photo-analysis ${cls}">${escapeHtml(text)}${pct}</div>`;
+}
+
 async function loadPhotoGrid(kitId, token) {
   const { data: photos } = await sb.from("photos").select("*").eq("kit_id", kitId).order("uploaded_at", { ascending: false }).limit(60);
   updateUploadCooldownUI(photos && photos.length ? photos[0].uploaded_at : null);
@@ -706,6 +733,11 @@ async function loadPhotoGrid(kitId, token) {
     grid.innerHTML = `<div class="empty-state">No photos uploaded yet.</div>`;
     return;
   }
+
+  const photoIds = photos.map(p => p.id);
+  const { data: analyses } = await sb.from("photo_analysis").select("*").in("photo_id", photoIds);
+  const analysisByPhoto = Object.fromEntries((analyses || []).map(a => [a.photo_id, a]));
+
   // Delete is only offered to the team itself (readOnly/instructor-peek has
   // no token) — real removal is enforced server-side by delete_photo, which
   // re-checks the device token itself, so this is just what decides whether
@@ -717,6 +749,7 @@ async function loadPhotoGrid(kitId, token) {
         ${token ? `<button class="photo-delete" type="button" data-photo-id="${p.id}" data-storage-path="${escapeHtml(p.storage_path)}" title="Delete this photo">×</button>` : ""}
       </div>
       <figcaption>${new Date(p.uploaded_at).toLocaleDateString()}${p.note ? " — " + escapeHtml(p.note) : ""}</figcaption>
+      ${renderPhotoAnalysis(analysisByPhoto[p.id])}
     </figure>
   `).join("");
 
@@ -810,7 +843,7 @@ async function uploadPhoto(kitId, token) {
     return;
   }
 
-  statusEl.textContent = "Photo uploaded!";
+  statusEl.textContent = "Photo uploaded! It'll be checked for disease signs next time the weekly photo analysis is run on a laptop — the result will appear under the photo below once that's done.";
   fileInput.value = "";
   noteInput.value = "";
   loadPhotoGrid(kitId, token);
