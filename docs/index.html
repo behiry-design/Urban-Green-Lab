@@ -193,8 +193,14 @@ const CONFIG = {
   // a cron job. Leave RUN_MODEL_URL empty to hide the button entirely — the
   // dashboard works fine without it, this is purely a convenience. NOTE:
   // do NOT include "/run" here — runSwarmModelNow() appends that itself.
-  RUN_MODEL_URL:    "https://greenhouse-training.onrender.com",
-  RUN_MODEL_SECRET: "e5d52a6c251b1b8d4d1b9013c09e25dd",   // must match RUN_SECRET set on that service
+  RUN_MODEL_URL:    "https://greenhouse-training.onrender.com",   // e.g. "https://your-service.onrender.com"
+
+  // A light deterrent, not real security — same idea as the per-kit device
+  // tokens: still visible to anyone who reads this file's source, but it
+  // stops the 30 teams from wandering into the Instructor view and
+  // clicking "Run swarm model now" / "Export all". Leave blank to turn the
+  // login screen off entirely.
+  INSTRUCTOR_PASSWORD: "greenhouse2026",
 };
 
 // The plants your teams are actually growing this term. The disease-
@@ -361,7 +367,62 @@ window.addEventListener("hashchange", render);
 // Instructor view — every kit at a glance
 // ============================================================================
 
+function isInstructorUnlocked() {
+  // No password configured yet — leave the gate off rather than lock the
+  // instructor out before they've set one.
+  if (!CONFIG.INSTRUCTOR_PASSWORD) return true;
+  return sessionStorage.getItem("gh_instructor_unlocked") === "1";
+}
+
+function renderInstructorLoginGate() {
+  app.innerHTML = `
+    <div class="panel" style="max-width:340px; margin:60px auto;">
+      <h2>Instructor login</h2>
+      <p style="font-size:13px;color:var(--text-secondary);">This view is for the instructor only.</p>
+      <input type="password" id="instructor-password-input" placeholder="Instructor password"
+             style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:8px; margin-top:10px; box-sizing:border-box;">
+      <div id="instructor-login-error" class="error" style="margin-top:8px; display:none;"></div>
+      <button class="primary-btn" id="instructor-login-btn" style="margin-top:12px;">Unlock</button>
+    </div>
+  `;
+  document.getElementById("instructor-login-btn").addEventListener("click", tryInstructorLogin);
+  const input = document.getElementById("instructor-password-input");
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") tryInstructorLogin(); });
+  input.focus();
+}
+
+function tryInstructorLogin() {
+  const input = document.getElementById("instructor-password-input");
+  if (input.value === CONFIG.INSTRUCTOR_PASSWORD) {
+    sessionStorage.setItem("gh_instructor_unlocked", "1");
+    renderInstructorView();
+    return;
+  }
+  const errorEl = document.getElementById("instructor-login-error");
+  errorEl.textContent = "Wrong password.";
+  errorEl.style.display = "block";
+  input.value = "";
+  input.focus();
+}
+
+// The run-model secret is asked for once per browser session (kept in
+// sessionStorage, never written into this file) so it doesn't sit in the
+// public page source the way CONFIG.RUN_MODEL_SECRET used to.
+function getRunModelSecret() {
+  let secret = sessionStorage.getItem("gh_run_secret");
+  if (!secret) {
+    secret = prompt("Enter the swarm-model run secret:");
+    if (!secret) return null;
+    sessionStorage.setItem("gh_run_secret", secret);
+  }
+  return secret;
+}
+
 async function renderInstructorView() {
+  if (!isInstructorUnlocked()) {
+    renderInstructorLoginGate();
+    return;
+  }
   const runButtonHtml = CONFIG.RUN_MODEL_URL
     ? `<button class="refresh" id="run-model-btn">▶ Run swarm model now</button>`
     : "";
@@ -387,6 +448,8 @@ async function renderInstructorView() {
 }
 
 async function runSwarmModelNow() {
+  const secret = getRunModelSecret();
+  if (!secret) return; // cancelled the prompt
   const btn = document.getElementById("run-model-btn");
   const lastRunEl = document.getElementById("model-last-run");
   btn.disabled = true;
@@ -394,10 +457,11 @@ async function runSwarmModelNow() {
   try {
     const resp = await fetch(CONFIG.RUN_MODEL_URL.replace(/\/$/, "") + "/run", {
       method: "POST",
-      headers: { "X-Run-Secret": CONFIG.RUN_MODEL_SECRET },
+      headers: { "X-Run-Secret": secret },
     });
     const body = await resp.json().catch(() => ({}));
     if (!resp.ok) {
+      if (resp.status === 401 || resp.status === 403) sessionStorage.removeItem("gh_run_secret");
       throw new Error(body.detail || `HTTP ${resp.status}`);
     }
     await loadInstructorData(); // re-reads swarm_model_state, which updates model-last-run itself
@@ -478,6 +542,9 @@ async function loadInstructorData() {
 
   grid.querySelectorAll(".card").forEach(card => {
     card.addEventListener("click", () => {
+      // Reaching this click means isInstructorUnlocked() already passed
+      // (the login gate runs before loadInstructorData ever populates the
+      // grid), so no extra check is needed here.
       localStorage.setItem("gh_instructor_peek_kit", card.dataset.kit);
       location.hash = "#/team";
     });
