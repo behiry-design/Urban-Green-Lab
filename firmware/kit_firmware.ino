@@ -2,7 +2,7 @@
    Smart Greenhouse Training Program — Kit Firmware (ESP32)
    ============================================================================
    What this does, every UPLOAD_INTERVAL_MS:
-     1. Reads temperature + humidity (DHT22) and soil moisture (capacitive
+     1. Reads temperature + humidity (DHT11) and soil moisture (capacitive
         analog probe), and light level if you wired one up.
      2. Sends those numbers straight to your team's row in the shared
         platform by calling the "insert_reading" function over HTTPS.
@@ -47,8 +47,8 @@ const char* SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
 
 // Which pin your soil moisture probe's analog output is wired to.
 const int SOIL_PIN = 34;      // ESP32 ADC1 pin — change if you wired it elsewhere
-const int DHT_PIN  = 4;       // DHT22 data pin
-#define DHT_TYPE DHT22
+const int DHT_PIN  = 4;       // DHT11 data pin
+#define DHT_TYPE DHT11
 
 // How often to send a reading. Start with 5 minutes during class so everyone
 // can see live data quickly; feel free to lengthen it (e.g. 15-30 min) once
@@ -158,7 +158,7 @@ void loop() {
   float soilPct  = soilRawToPercent(soilRaw);
 
   if (isnan(humidity) || isnan(tempC)) {
-    Serial.println("DHT22 read failed — check wiring. Skipping this cycle.");
+    Serial.println("DHT11 read failed — check wiring. Skipping this cycle.");
   } else {
     Serial.printf("Temp: %.1f C  Humidity: %.1f%%  Soil: %.1f%% (raw %d)\n",
                   tempC, humidity, soilPct, soilRaw);
