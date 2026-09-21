@@ -151,7 +151,14 @@ def compute_vpd_kpa(temp_c, rh_pct):
 
 
 def vpd_band_for(fruit_type):
-    return FRUIT_VPD_BANDS.get((fruit_type or "").strip().lower(), DEFAULT_VPD_BAND)
+    # A kit whose fruit_type was never set arrives here as NaN (a float,
+    # not a string or None) once it has passed through pandas — that used
+    # to crash this whole function with "'float' object has no attribute
+    # 'strip'". Anything that isn't actually a string just falls back to
+    # the generic VPD band instead.
+    if not isinstance(fruit_type, str):
+        fruit_type = ""
+    return FRUIT_VPD_BANDS.get(fruit_type.strip().lower(), DEFAULT_VPD_BAND)
 
 
 def build_features(readings_df):
