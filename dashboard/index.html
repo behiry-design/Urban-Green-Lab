@@ -10,12 +10,9 @@
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 
 <style>
-  /* ==========================================================================
-     Palette: greenhouse "Optics" categorical/sequential + the fixed status
-     palette (good/warning/serious/critical) from the project's dataviz
-     standard. Light mode only — this dashboard is used on a shared screen /
-     laptop during training, not as a themed personal app.
-     ========================================================================== */
+  /* Palette: categorical/sequential colors + fixed status colors (good/
+     warning/serious/critical). Light mode only — shared screen/laptop use
+     during training, not a themed personal app. */
   :root {
     --surface-1:      #fcfcfb;
     --page-plane:     #f9f9f7;
@@ -171,16 +168,13 @@
 <footer class="site-footer">Implemented by Nature Eye Labs and funded by Green Grants</footer>
 
 <script>
-/* ============================================================================
-   CONFIG — the instructor fills these in ONCE (same values for every team).
-   They are not secret: SUPABASE_ANON_KEY is Supabase's public "anon" key,
-   safe to ship in a static file. It is deliberately weak on its own — every
-   write still has to pass the device_token check inside insert_reading /
-   insert_photo (see sql/setup.sql).
-   ============================================================================ */
+/* CONFIG — instructor fills these in once, same values for every team.
+   Not secret: SUPABASE_ANON_KEY is Supabase's public anon key, safe in a
+   static file — every write still has to pass the device_token check in
+   insert_reading/insert_photo (see sql/setup.sql). */
 const CONFIG = {
-  SUPABASE_URL:      "https://onrozqpzbaavvkiqqmkz.supabase.co",
-  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ucm96cXB6YmFhdnZraXFxbWt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4OTk4MzgsImV4cCI6MjEwNDQ3NTgzOH0.uufWko5ciOuoxzmzzM8eYlahDd4LFP-GIywzdAXprh8",
+  SUPABASE_URL:      "https://YOUR-PROJECT-REF.supabase.co",
+  SUPABASE_ANON_KEY: "YOUR_SUPABASE_ANON_KEY",
   PHOTOS_BUCKET:     "growth-photos",
   REFRESH_MS:        30000,   // how often views auto-refresh
   PHOTO_MAX_DIMENSION_PX: 1600,  // longest side a growth photo is resized to before upload
@@ -191,20 +185,16 @@ const CONFIG = {
   // Optional: the hosted endpoint from service/app.py that lets the
   // instructor view trigger the swarm model on demand instead of only via
   // a cron job. Leave RUN_MODEL_URL empty to hide the button entirely — the
-  // dashboard works fine without it, this is purely a convenience. NOTE:
-  // do NOT include "/run" here — runSwarmModelNow() appends that itself.
+  // dashboard works fine without it, this is purely a convenience.
   RUN_MODEL_URL:    "https://greenhouse-training.onrender.com",   // e.g. "https://your-service.onrender.com"
 };
 
-// The plants your teams are actually growing this term. The disease-
-// detection model (swarm_model/analyze_photos.py) was trained on 38 classes
-// across 14 crops — several of them (apple, cherry, peach, grape, orange,
-// blueberry, raspberry, corn, soybean) are trees/field crops nobody in a
-// home-greenhouse-kit program will ever really photograph. Because the model
-// always has to pick ONE of its 38 classes — it has no "I don't recognize
-// this" option — pointing it at an out-of-scope plant just produces a
-// confident wrong guess. Listing your real crops here lets the dashboard
-// flag those wrong guesses instead of presenting them as real diagnoses.
+// Crops your teams are actually growing. The model (analyze_photos.py) was
+// trained on 38 classes across 14 crops, several of which (apple, corn,
+// grape, etc.) nobody in a home-greenhouse-kit program will ever
+// photograph — and since it always picks one of its 38 classes, an
+// out-of-scope plant just gets a confident wrong guess. This list lets the
+// dashboard flag those instead of presenting them as real diagnoses.
 // EDIT THIS LIST whenever the plants your teams grow change.
 const PROGRAM_CROPS = ["strawberry", "tomato", "pepper"];
 
@@ -267,11 +257,11 @@ function capitalize(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
-// Returns a short warning string if a photo-analysis result doesn't fit this
-// program, or null if it looks fine. Two checks: (1) is the detected crop
-// even one of PROGRAM_CROPS at all — catches the "photographed a plant this
-// model was never meant to judge" case; (2) does it match THIS kit's own
-// registered fruit_type — catches a mismatched/mislabeled photo.
+// Returns a warning string if a photo result doesn't fit this program, else
+// null. Checks (1) is the detected crop even in PROGRAM_CROPS at all —
+// catches an out-of-scope plant the model was never meant to judge; (2)
+// does it match this kit's own registered fruit_type — catches a
+// mismatched/mislabeled photo.
 function cropMismatchWarning(detectedCrop, fruitType) {
   if (!detectedCrop) return null;
   const inProgram = PROGRAM_CROPS.some(c => normalizeCropName(c) === detectedCrop);
@@ -294,9 +284,8 @@ function rangeToSince(rangeKey) {
   return new Date(Date.now() - hours * 3600 * 1000).toISOString();
 }
 
-// A single-axis line chart. `series` is [{label, data:[{x,y}], color}].
-// Never mixes two different measurement scales on one chart (see dataviz
-// guidance) — callers are responsible for grouping compatible series only.
+// Single-axis line chart. `series` is [{label, data:[{x,y}], color}].
+// Callers group series with compatible scales — never mix units on one chart.
 function drawLineChart(canvas, series, yLabel) {
   return new Chart(canvas, {
     type: "line",
@@ -360,9 +349,8 @@ window.addEventListener("hashchange", render);
 // Instructor view — every kit at a glance
 // ============================================================================
 
-// The run-model secret is asked for once per browser session (kept in
-// sessionStorage, never written into this file) so it doesn't sit in the
-// public page source the way a hardcoded CONFIG value would.
+// Asked for once per browser session and kept in sessionStorage rather than
+// hardcoded in CONFIG, so it doesn't sit in the public page source.
 function getRunModelSecret() {
   let secret = sessionStorage.getItem("gh_run_secret");
   if (!secret) {
@@ -573,12 +561,9 @@ function renderLoginForm(errorMsg) {
     const kitId = document.getElementById("kit-id").value.trim().toUpperCase();
     const token = document.getElementById("kit-token").value.trim();
     if (!kitId || !token) return renderLoginForm("Enter both fields.");
-    // Confirm the pair is valid by attempting a harmless RPC call: inserting
-    // a photo record needs a real storage_path, so instead we verify by
-    // checking the kit exists and then trusting the token — the real check
-    // happens for real the moment they try to upload a photo (insert_photo
-    // will reject a wrong token then). This keeps the login step to one
-    // read call.
+    // Just checks the kit exists; the token itself isn't verified until the
+    // first real write (insert_photo etc. will reject a bad token then).
+    // Keeps login to a single read call.
     const { data: kit, error } = await sb.from("kits_public").select("id").eq("id", kitId).maybeSingle();
     if (error || !kit) return renderLoginForm(`Kit ID "${kitId}" not found.`);
     storeCreds(kitId, token);
@@ -776,10 +761,9 @@ async function loadTeamCharts(kitId, rangeKey) {
 }
 
 // ---------------------------------------------------------------------------
-// CSV export (team view: one kit; instructor view: every kit) — used for
-// offline data analysis. Supabase caps a single request at ~1000 rows, so
-// this pages through with .range() instead of trusting one query to return
-// everything a kit has reported over the full 3-day program.
+// CSV export (one kit or all kits). Supabase caps a request at ~1000 rows,
+// so this pages through with .range() rather than trusting one query to
+// return everything.
 // ---------------------------------------------------------------------------
 
 async function fetchAllRows(queryPage, pageSize = 1000) {
@@ -842,11 +826,9 @@ async function downloadKitReadingsCsv(kitId, kit) {
   }
 }
 
-// Photos are meant to show change over time, not a burst of shots in one
-// sitting — the dashboard nudges teams toward roughly one a day. The real
-// gate is server-side (insert_photo in sql/setup.sql rejects an upload
-// that's too soon regardless of this UI), this just gives a clear reason
-// and a countdown instead of a team hitting a confusing error.
+// Nudges teams toward roughly one photo a day. The real gate is server-side
+// (insert_photo rejects an upload that's too soon regardless of this UI) —
+// this just gives a clear reason and countdown instead of a confusing error.
 function updateUploadCooldownUI(lastUploadedAt) {
   const row = document.getElementById("upload-row");
   if (!row) return; // read-only (instructor peek) view has no upload panel
@@ -877,12 +859,10 @@ function formatDiseaseLabel(label) {
   return `${crop} — possible ${condition || "issue"}`;
 }
 
-// Short, general care tips per non-healthy class label — standard, widely-
-// published agricultural-extension guidance (not a substitute for an
-// instructor or agronomist confirming the actual diagnosis, especially since
-// the model's confidence is never 100%). Deliberately generic ("a labeled
-// fungicide") rather than naming specific products, since availability
-// varies and this is a training aid, not a purchasing recommendation.
+// General care tips per non-healthy label — standard extension guidance,
+// not a substitute for an instructor/agronomist confirming the diagnosis
+// (model confidence is never 100%). Kept generic ("a labeled fungicide")
+// rather than naming products, since availability varies.
 const DISEASE_ADVICE = {
   "Apple___Apple_scab": "Rake up and destroy fallen leaves in autumn to cut down overwintering spores. Apply a fungicide labeled for apple scab starting at bud break.",
   "Apple___Black_rot": "Prune out dead or cankered wood and remove mummified fruit from the tree and ground, then apply a labeled fungicide during the growing season.",
@@ -912,9 +892,8 @@ const DISEASE_ADVICE = {
   "Tomato___Tomato_mosaic_virus": "No cure — remove and destroy infected plants, and wash hands/tools between plants since it spreads by touch.",
 };
 
-// One line under a photo showing what the disease-detection pass found for
-// it (run manually on a laptop — see swarm_model/analyze_photos.py — not
-// automatically the moment a photo is uploaded), or that it's still pending.
+// Shows what the disease-detection pass found for a photo (run manually,
+// not automatically on upload — see analyze_photos.py), or that it's pending.
 function renderPhotoAnalysis(analysis, fruitType) {
   if (!analysis) return `<div class="photo-analysis pending">Not analyzed yet</div>`;
   const text = formatDiseaseLabel(analysis.label);
@@ -947,10 +926,8 @@ async function loadPhotoGrid(kitId, token, fruitType) {
   const { data: analyses } = await sb.from("photo_analysis").select("*").in("photo_id", photoIds);
   const analysisByPhoto = Object.fromEntries((analyses || []).map(a => [a.photo_id, a]));
 
-  // Delete is only offered to the team itself (readOnly/instructor-peek has
-  // no token) — real removal is enforced server-side by delete_photo, which
-  // re-checks the device token itself, so this is just what decides whether
-  // to show the button.
+  // Delete button only shown with a token (team view, not instructor peek) —
+  // delete_photo() re-checks the token server-side regardless.
   grid.innerHTML = photos.map(p => `
     <figure>
       <div class="photo-frame">
@@ -971,12 +948,10 @@ async function loadPhotoGrid(kitId, token, fruitType) {
 
 async function deletePhoto(kitId, token, photoId, storagePath) {
   if (!confirm("Delete this photo? This can't be undone.")) return;
-  // delete_photo() only removes the metadata row (see its comment in sql/setup.sql —
-  // Supabase blocks raw SQL DELETE on storage.objects). The actual file in storage
-  // has to be removed separately, through the Storage API, which is what this second
-  // call does. It runs best-effort: if it fails, the photo is already gone from the
-  // gallery (the part the team cares about) and the file is just left behind in
-  // storage rather than the delete appearing to fail.
+  // delete_photo() only removes the metadata row (Supabase blocks raw SQL
+  // DELETE on storage.objects — see sql/setup.sql). This second call removes
+  // the actual file; best-effort, since the photo is already gone from the
+  // gallery either way.
   const { error } = await sb.rpc("delete_photo", { p_kit_id: kitId, p_token: token, p_photo_id: photoId });
   if (error) { alert(`Couldn't delete this photo: ${error.message}`); return; }
   if (storagePath) {
@@ -986,10 +961,9 @@ async function deletePhoto(kitId, token, photoId, storagePath) {
   loadPhotoGrid(kitId, token);
 }
 
-// Resizes/re-compresses an image file in the browser before it ever leaves
-// the device — this is what keeps 30 teams' phone photos (often 3-10MB each)
-// from blowing through Supabase's free-tier storage/bandwidth quota. Returns
-// a JPEG Blob, always at most CONFIG.PHOTO_MAX_DIMENSION_PX on the long edge.
+// Resizes/recompresses in-browser before upload, so 30 teams' phone photos
+// (often 3-10MB) don't blow through Supabase's free-tier quota. Returns a
+// JPEG Blob capped at CONFIG.PHOTO_MAX_DIMENSION_PX on the long edge.
 function resizeImageForUpload(file, maxDim, quality) {
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(file);

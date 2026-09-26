@@ -21,7 +21,7 @@ RUN_SECRET       - a password you make up yourself; only the dashboard,
 DEPLOY (Render.com free tier is a reasonable, no-cost option)
 ----------------------------------------------------------------------------
 1. Push this project (needs both service/ and swarm_model/, sitting side by
-   side, same as in this zip) to a GitHub repo.
+   side) to a GitHub repo.
 2. In Render: New -> Web Service -> connect that repo.
      Root Directory:  LEAVE BLANK (repo root) — do NOT set it to "service".
                        Render restricts a service to seeing only files under
@@ -57,9 +57,9 @@ RUN_SECRET = os.environ.get("RUN_SECRET")
 
 app = FastAPI()
 
-# Loosened to any origin rather than pinned to one dashboard URL — the same
-# "kept simple for a short internal training" tradeoff made throughout this
-# project. Tighten allow_origins to your actual dashboard URL if you want.
+# Wide open rather than pinned to one dashboard URL — kept simple for a
+# short internal training. Tighten allow_origins to your actual dashboard
+# URL if you want.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

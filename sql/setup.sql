@@ -184,13 +184,10 @@ set search_path = public
 as $$
 declare
   v_last_uploaded_at timestamptz;
-  -- How often a team may add a growth photo. Once a day is enough to show
-  -- real change without teams dumping a burst of near-identical shots — this
-  -- is the ACTUAL limit; the dashboard's own countdown is just a friendlier
-  -- front end for it and can't be relied on alone. Change the interval here
-  -- (and the matching CONFIG.PHOTO_MIN_INTERVAL_HOURS in dashboard/index.html,
-  -- so the on-screen countdown stays accurate) if daily is too fast or slow
-  -- for how quickly your crop visibly changes.
+  -- Once a day is enough to show real change without a burst of near-
+  -- identical shots. This is the actual limit — the dashboard's countdown
+  -- is just a UI reflection of it. Keep CONFIG.PHOTO_MIN_INTERVAL_HOURS in
+  -- dashboard/index.html in sync if you change this.
   v_min_interval interval := interval '24 hours';
 begin
   perform assert_kit_token(p_kit_id, p_token);
@@ -207,16 +204,12 @@ begin
 end;
 $$;
 
--- Called by the dashboard when a team deletes one of their own photos (e.g.
--- a blurry or off-topic shot). Token-checked like every other write here.
--- This ONLY removes the metadata row — Supabase deliberately blocks direct
--- SQL DELETE on storage.objects ("Direct deletion from storage tables is
--- not allowed. Use the Storage API instead"), because deleting that row
--- without going through its Storage API would leave the actual file behind
--- as an orphan. So the dashboard does the real file removal itself right
--- after this call succeeds, via sb.storage.from(...).remove([path]) — see
--- deletePhoto() in dashboard/index.html. The storage policy below is what
--- lets that client-side call succeed.
+-- Called when a team deletes one of their own photos. Token-checked like
+-- every other write. Only removes the metadata row — Supabase blocks direct
+-- SQL DELETE on storage.objects ("Use the Storage API instead"), so the
+-- dashboard removes the actual file itself afterward via
+-- sb.storage.from(...).remove([path]) (see deletePhoto() in index.html).
+-- The storage policy below is what allows that client-side call to succeed.
 create or replace function delete_photo(
   p_kit_id   text,
   p_token    text,
@@ -271,23 +264,17 @@ grant execute on function set_kit_fruit_type(text, text, text) to anon, authenti
 -- 4. Storage bucket for growth photos
 -- ---------------------------------------------------------------------------
 
--- file_size_limit is a hard server-side cap (bytes) — belt-and-suspenders
--- alongside the dashboard's own in-browser resize-before-upload step, so a
--- lot of teams' phone photos can't quietly blow through the free-tier
--- storage quota even if something skips the client-side compression.
+-- Hard server-side size cap (bytes), backing up the dashboard's in-browser
+-- resize step in case something skips client-side compression.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('growth-photos', 'growth-photos', true, 5242880, array['image/jpeg','image/png','image/webp'])
 on conflict (id) do nothing;
 
--- Anyone can upload (kept simple for a short internal training — see the
--- setup guide's "Scope & limitations" note) and anyone can read (so <img>
--- tags on the dashboard load without extra auth headers). Delete is
--- similarly open at the storage layer — the real "only your own kit" gate
--- is delete_photo()'s device_token check just above, which removes the
--- metadata row; a deleted photo already vanishes from the gallery there.
--- This policy just lets the dashboard's follow-up Storage API call actually
--- remove the file, which Supabase requires going through this API for
--- rather than a raw SQL DELETE (see the comment on delete_photo() above).
+-- Anyone can upload/read at the storage layer (kept simple for a short
+-- internal training). Delete is open here too — the real "only your own
+-- kit" gate is delete_photo()'s device_token check, which already removes
+-- the photo from the gallery; this policy just lets the dashboard's
+-- follow-up Storage API call clean up the actual file.
 create policy "anyone can upload growth photos"
   on storage.objects for insert
   with check (bucket_id = 'growth-photos');

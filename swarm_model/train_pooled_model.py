@@ -2,21 +2,18 @@
 """
 Smart Greenhouse Training Program — pooled "swarm" health model.
 
-WHAT THIS IS
-------------
-Every kit reports temperature, humidity and soil moisture to the shared
-platform. On its own, one kit's data can't tell you whether a reading is
-normal or worrying — there's no baseline to compare against. Pool the
-readings from every team's kit together, though, and a shared model can
-learn what "normal" looks like across the whole class and flag any kit
-that's drifting away from it. That's the "swarm" part: every kit that comes
-online makes the model that watches ALL of them a little better.
+Every kit reports temperature, humidity and soil moisture, but on its own
+one kit's data has no baseline to compare against. Pool the readings from
+every team's kit together, though, and a shared model can learn what
+"normal" looks like across the whole class and flag any kit drifting away
+from it. That's the "swarm" part: every kit that comes online makes the
+model watching all of them a little better.
 
 This script:
-  1. Pulls recent sensor readings for every kit from the shared database.
+  1. Pulls recent sensor readings for every kit.
   2. Builds a feature vector per kit (recent averages, trend, and the
      agronomic VPD stress signal used elsewhere in this project).
-  3. Fits an IsolationForest on the POOLED features across all kits, so a
+  3. Fits an IsolationForest on the pooled features across all kits, so a
      kit is judged against the rest of the class, not a fixed threshold.
   4. Combines that anomaly score with explainable rule-based flags (VPD out
      of band, soil very dry/wet, temperature extreme) into a 0-100 health
@@ -25,20 +22,19 @@ This script:
 
 HOW TO RUN IT
 -------------
-Run it by hand any time during the training ("did that soil-drying-out demo
-change anyone's score?"), or put it on a schedule (cron, a GitHub Action, a
-Supabase Edge Function on a timer — the setup guide covers the simplest
-option). It's safe to re-run constantly: each run recomputes everything
-from scratch and overwrites the previous scores.
+Run it by hand any time during training, or put it on a schedule (cron, a
+GitHub Action, a Supabase Edge Function on a timer — the setup guide covers
+the simplest option). Safe to re-run constantly: each run recomputes
+everything from scratch and overwrites the previous scores.
 
     export SUPABASE_DB_URL="postgresql://postgres:[password]@[host]:5432/postgres"
     python3 train_pooled_model.py
 
 Get SUPABASE_DB_URL from Supabase: Project Settings > Database > Connection
 string (URI). This script needs the DATABASE connection (not the anon/REST
-API) because it needs to write health_scores for every kit at once, which
-bypasses the per-kit device_token checks by design — treat this connection
-string like a password.
+API) because it writes health_scores for every kit at once, which bypasses
+the per-kit device_token checks by design — treat this connection string
+like a password.
 
 Dependencies: pandas, numpy, scikit-learn, psycopg2-binary
     pip install pandas numpy scikit-learn psycopg2-binary
@@ -59,21 +55,17 @@ from sklearn.ensemble import IsolationForest
 # Tunable settings
 # ============================================================================
 
-# Only use readings from the last LOOKBACK_HOURS to compute a kit's current
-# status — a kit's health today shouldn't be judged on data from three days
-# ago. 24h is a reasonable default for a 3-day training; widen it if kits
-# report infrequently.
+# Window used to score a kit's current status. 24h fits a 3-day training;
+# widen it if kits report infrequently.
 LOOKBACK_HOURS = 24
 
-# A kit needs at least this many readings in the lookback window before the
-# model will score it at all — otherwise a single noisy reading could look
-# like a huge outlier.
+# Minimum readings a kit needs in the window before it gets scored at all —
+# otherwise a single noisy reading could look like a huge outlier.
 MIN_READINGS_FOR_SCORING = 3
 
-# Vapor Pressure Deficit target band (kPa) for vegetative-stage growth. This
-# is the same agronomic signal used in the project's own greenhouse pilot
-# analysis. It's a reasonable general default across common greenhouse fruit
-# crops (tomato, pepper, strawberry, cucumber) — narrow it per fruit_type in
+# VPD (Vapor Pressure Deficit) target band in kPa for vegetative-stage
+# growth — a reasonable default across common greenhouse fruit crops
+# (tomato, pepper, strawberry, cucumber). Override per fruit_type in
 # FRUIT_VPD_BANDS below if a team's crop needs a tighter/looser range.
 DEFAULT_VPD_BAND = (0.8, 1.2)
 FRUIT_VPD_BANDS = {
@@ -86,11 +78,10 @@ FRUIT_VPD_BANDS = {
 SOIL_TOO_DRY_PCT = 20.0
 SOIL_TOO_WET_PCT = 85.0
 
-# If swarm_model/analyze_photos.py has been run (it's optional — see that
-# file), a kit's most recent photo diagnosis within this window is folded in
-# as one more rule-based flag, same spirit as the VPD/soil rules above. If
-# analyze_photos.py has never been run, photo_analysis is just empty and this
-# is a complete no-op — nothing here requires it.
+# If swarm_model/analyze_photos.py has been run (it's optional), a kit's
+# most recent photo diagnosis within this window is folded in as one more
+# rule-based flag, same spirit as the VPD/soil rules above. If it's never
+# been run, photo_analysis is just empty and this is a no-op.
 PHOTO_SIGNAL_LOOKBACK_HOURS = 72
 PHOTO_SIGNAL_CONFIDENCE_THRESHOLD = 0.6
 PHOTO_SIGNAL_PENALTY = 20.0
@@ -122,8 +113,7 @@ def fetch_recent_readings(conn, lookback_hours):
         where r.recorded_at >= %s
         order by r.kit_id, r.recorded_at
     """
-    # Fetched via a plain cursor (rather than pandas.read_sql) so this script
-    # only needs psycopg2 — no SQLAlchemy dependency required.
+    # Plain cursor instead of pandas.read_sql, to avoid an extra SQLAlchemy dependency.
     with conn.cursor() as cur:
         cur.execute(query, (since,))
         cols = [c.name for c in cur.description]
@@ -151,14 +141,7 @@ def compute_vpd_kpa(temp_c, rh_pct):
 
 
 def vpd_band_for(fruit_type):
-    # A kit whose fruit_type was never set arrives here as NaN (a float,
-    # not a string or None) once it has passed through pandas — that used
-    # to crash this whole function with "'float' object has no attribute
-    # 'strip'". Anything that isn't actually a string just falls back to
-    # the generic VPD band instead.
-    if not isinstance(fruit_type, str):
-        fruit_type = ""
-    return FRUIT_VPD_BANDS.get(fruit_type.strip().lower(), DEFAULT_VPD_BAND)
+    return FRUIT_VPD_BANDS.get((fruit_type or "").strip().lower(), DEFAULT_VPD_BAND)
 
 
 def build_features(readings_df):
@@ -203,10 +186,8 @@ def score_kits(features_df):
     results = []
 
     if len(scorable) >= 2:
-        # These are the columns the pooled model actually looks at. Pooling
-        # across every kit is what makes this "swarm" rather than per-kit
-        # thresholds: with only one kit there's no meaningful "normal" to
-        # compare against.
+        # Columns the pooled model looks at. Needs >= 2 kits — with only one
+        # kit there's no meaningful "normal" to compare against.
         model_cols = ["mean_temp_c", "mean_humidity_pct", "mean_soil_pct",
                       "mean_vpd_kpa", "soil_slope_pct_per_hr"]
         X = scorable[model_cols].values
@@ -228,7 +209,7 @@ def score_kits(features_df):
             anomaly_health = np.full_like(raw, 100.0)  # everyone identical -> no outliers
         scorable["anomaly_health"] = anomaly_health
     else:
-        # Not enough kits reporting yet for the pooled model to mean anything.
+        # Not enough kits reporting yet for pooling to mean anything.
         scorable["anomaly_health"] = 100.0
 
     for _, row in scorable.iterrows():
@@ -304,10 +285,9 @@ def fetch_recent_disease_flags(conn, lookback_hours):
 
 
 def apply_photo_signal(scores_df, disease_flags):
-    """Nudges a kit's score/status down if its latest photo looked diseased
-    with reasonable confidence. Never touches insufficient_data kits (no
-    sensor basis to combine it with) and is a no-op for any kit with no
-    recent photo diagnosis, a healthy one, or a low-confidence one."""
+    """Nudges a kit's score/status down for a confident non-healthy photo
+    diagnosis. No-op for insufficient_data kits, or any kit with no recent
+    photo diagnosis, a healthy one, or a low-confidence one."""
     for i, row in scores_df.iterrows():
         flag = disease_flags.get(row["kit_id"])
         if not flag or flag["is_healthy"] or flag["confidence"] < PHOTO_SIGNAL_CONFIDENCE_THRESHOLD:
@@ -337,12 +317,12 @@ def apply_photo_signal(scores_df, disease_flags):
 def upsert_health_scores(conn, scores_df, model_version):
     with conn.cursor() as cur:
         for _, row in scores_df.iterrows():
-            # pandas mixes None into a float64 column as NaN. psycopg2 sends
-            # NaN through as the literal float value 'NaN', not SQL NULL —
-            # and Postgres's real/float types happily store that. But JSON
-            # has no NaN, so PostgREST later fails to serialize the ENTIRE
-            # health_scores response for every kit, not just this one. Coerce
-            # back to a real Python None so it lands as SQL NULL instead.
+            # pandas turns None into NaN in a float64 column, and psycopg2
+            # sends NaN through as the literal float value, not SQL NULL.
+            # Postgres's real/float types store that fine, but JSON has no
+            # NaN, so PostgREST then fails to serialize the whole
+            # health_scores response, not just this row. Coerce back to a
+            # real Python None so it lands as SQL NULL instead.
             score = None if pd.isna(row["score"]) else float(row["score"])
             cur.execute(
                 """
@@ -385,13 +365,12 @@ def update_model_state(conn, n_kits_included, n_readings_included, model_version
 # ============================================================================
 
 def run_once(conn=None):
-    """Does one full scoring pass and returns a small JSON-able summary dict.
+    """Runs one full scoring pass and returns a small JSON-able summary dict.
     Split out from main() so something other than the command line can
     trigger it directly — e.g. service/app.py, behind the dashboard's
     "Run swarm model now" button — without shelling out to a subprocess.
-    Pass an existing connection to reuse it (e.g. a long-lived service);
-    otherwise one is opened and closed here, same as running this as a
-    script."""
+    Pass an existing connection to reuse it; otherwise one is opened and
+    closed here, same as running this as a script."""
     owns_conn = conn is None
     if owns_conn:
         conn = get_connection()

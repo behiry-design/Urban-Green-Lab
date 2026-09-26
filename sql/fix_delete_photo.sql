@@ -3,12 +3,11 @@
 --
 -- Cause: delete_photo() was trying to DELETE FROM storage.objects directly
 -- in SQL. Supabase blocks that on purpose (it would leave an orphaned file
--- behind), so it must go through the Storage API instead. This snippet:
+-- behind), so it has to go through the Storage API instead. This snippet:
 --   1. Replaces delete_photo() so it only removes the "photos" metadata row.
 --   2. Adds a storage policy that lets the dashboard's own follow-up
 --      Storage API call (sb.storage.from(...).remove([path])) actually
---      delete the file — the dashboard code for that call is already fixed
---      in the index.html you're about to redeploy.
+--      delete the file — already fixed in the index.html you're redeploying.
 --
 -- Safe to run as-is on your existing project: replace + add, nothing to
 -- drop first.

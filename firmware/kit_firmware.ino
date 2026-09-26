@@ -1,24 +1,16 @@
 /* ============================================================================
    Smart Greenhouse Training Program — Kit Firmware (ESP32)
    ============================================================================
-   What this does, every UPLOAD_INTERVAL_MS:
-     1. Reads temperature + humidity (DHT11) and soil moisture (capacitive
-        analog probe), and light level if you wired one up.
-     2. Sends those numbers straight to your team's row in the shared
-        platform by calling the "insert_reading" function over HTTPS.
-     3. Repeats forever.
+   Every UPLOAD_INTERVAL_MS: reads temp/humidity (DHT11), soil moisture
+   (capacitive analog probe), and light level if wired up, then POSTs them
+   to the shared platform via the insert_reading RPC over HTTPS.
 
-   ---- Everything YOUR team needs to edit is in the CONFIG block below. -----
-   Everything after that block is the same for every kit — you shouldn't need
-   to touch it, but reading through it is a good way to see how an ESP32
-   talks to a web API.
+   Edit the CONFIG block below for your team; nothing else needs to change.
 
-   Libraries to install first (Arduino IDE: Tools > Manage Libraries):
+   Libraries (Arduino IDE: Tools > Manage Libraries):
      - "DHT sensor library" by Adafruit
-     - "Adafruit Unified Sensor" (a dependency of the above)
-     - "ArduinoJson" by Benoit Blanchon — version 7.x (this sketch uses the
-       v7 JsonDocument API; installing via Library Manager gets you the
-       latest 7.x by default)
+     - "Adafruit Unified Sensor" (dependency of the above)
+     - "ArduinoJson" by Benoit Blanchon, v7.x (uses the JsonDocument API)
    Board: whichever ESP32 dev board you were given (Tools > Board).
    ========================================================================= */
 
@@ -35,24 +27,20 @@
 const char* WIFI_SSID     = "YOUR_WIFI_NAME";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
-// Given to your team on your kit card during training. Do not share these
-// outside your team — device_token is effectively your kit's password.
+// From your kit card. Keep private — device_token is basically your kit's password.
 const char* KIT_ID        = "K01";
 const char* DEVICE_TOKEN  = "REPLACE_WITH_YOUR_TEAMS_TOKEN";
 
-// Given by the instructor once (same for every team — this is the shared
-// platform's address, not a secret).
+// From the instructor, same for every team — not a secret, just the platform URL.
 const char* SUPABASE_URL      = "https://YOUR-PROJECT-REF.supabase.co";
 const char* SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
 
-// Which pin your soil moisture probe's analog output is wired to.
 const int SOIL_PIN = 34;      // ESP32 ADC1 pin — change if you wired it elsewhere
 const int DHT_PIN  = 4;       // DHT11 data pin
 #define DHT_TYPE DHT11
 
-// How often to send a reading. Start with 5 minutes during class so everyone
-// can see live data quickly; feel free to lengthen it (e.g. 15-30 min) once
-// your kit is running unattended after training, to save battery/bandwidth.
+// 5 min is good for class visibility; bump to 15-30 min once the kit is
+// running unattended after training, to save battery/bandwidth.
 const unsigned long UPLOAD_INTERVAL_MS = 5UL * 60UL * 1000UL;   // 5 minutes
 
 // ============================================================================
@@ -61,10 +49,9 @@ const unsigned long UPLOAD_INTERVAL_MS = 5UL * 60UL * 1000UL;   // 5 minutes
 
 DHT dht(DHT_PIN, DHT_TYPE);
 
-// Dry-air / wet-soil calibration for the capacitive probe. These are typical
-// raw ADC values for common ESP32 capacitive soil sensors, but every probe
-// is slightly different — the CALIBRATION section of the training covers how
-// to measure your own SOIL_DRY_RAW / SOIL_WET_RAW and replace these.
+// Typical raw ADC values for these capacitive probes, but every probe
+// differs — see the CALIBRATION section of the training doc to measure and
+// replace your own SOIL_DRY_RAW / SOIL_WET_RAW.
 const int SOIL_DRY_RAW = 3000;   // raw analogRead() value in dry air
 const int SOIL_WET_RAW = 1200;   // raw analogRead() value in a cup of water
 
@@ -86,9 +73,8 @@ void connectWiFi() {
   }
 }
 
-// Converts a raw analogRead() into an approximate 0-100% moisture value.
-// Capacitive probes read LOWER when wet, HIGHER when dry — this flips that
-// so the number matches what a person expects ("higher = wetter").
+// Capacitive probes read lower when wet, higher when dry — flip it so the
+// number matches what people expect ("higher = wetter").
 float soilRawToPercent(int raw) {
   float pct = 100.0 * (float)(SOIL_DRY_RAW - raw) / (float)(SOIL_DRY_RAW - SOIL_WET_RAW);
   if (pct < 0) pct = 0;
@@ -103,9 +89,7 @@ bool sendReading(float tempC, float humidityPct, float soilPct) {
   }
 
   WiFiClientSecure client;
-  client.setInsecure();   // trust any TLS cert — simplest option for a short
-                           // training deployment; see the setup guide for
-                           // the (optional) hardened alternative.
+  client.setInsecure();   // skip cert verification — fine for a short training deployment
 
   HTTPClient http;
   String endpoint = String(SUPABASE_URL) + "/rest/v1/rpc/insert_reading";
